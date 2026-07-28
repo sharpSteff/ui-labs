@@ -42,6 +42,9 @@ jobs:
           dotnet restore src/Cli/src/LeXtudio.Uno.Cli.UnitTests/LeXtudio.Uno.Cli.UnitTests.csproj
           dotnet restore src/Cli/src/LeXtudio.Jalium.Cli.UnitTests/LeXtudio.Jalium.Cli.UnitTests.csproj
 
+      - name: Restore agent core tests
+        run: dotnet restore src/DevFlow/LeXtudio.DevFlow.Agent.Core.Tests/LeXtudio.DevFlow.Agent.Core.Tests.csproj
+
       - name: Restore WPF agent tests
         run: dotnet restore src/DevFlow/LeXtudio.DevFlow.Agent.Wpf.Tests/LeXtudio.DevFlow.Agent.Wpf.Tests.csproj
 
@@ -65,6 +68,9 @@ jobs:
 
       - name: Run MewUI agent tests
         run: dotnet test src/DevFlow/LeXtudio.DevFlow.Agent.MewUI.Tests/LeXtudio.DevFlow.Agent.MewUI.Tests.csproj --configuration Release --no-restore
+
+      - name: Run agent core tests
+        run: dotnet test src/DevFlow/LeXtudio.DevFlow.Agent.Core.Tests/LeXtudio.DevFlow.Agent.Core.Tests.csproj --configuration Release --no-restore
 
       - name: Run WPF agent tests
         run: dotnet test src/DevFlow/LeXtudio.DevFlow.Agent.Wpf.Tests/LeXtudio.DevFlow.Agent.Wpf.Tests.csproj --configuration Release --no-restore
@@ -120,13 +126,18 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libxkbcommon0 libinput10 xvfb
+          # libxtst6 provides the XTEST extension the Linux native mouse
+          # injection backend posts pointer events through.
+          sudo apt-get install -y libxkbcommon0 libinput10 xvfb libxtst6
 
       - name: Start Xvfb
         if: runner.os == 'Linux'
         run: |
           Xvfb :99 -screen 0 1024x768x24 &
           echo "DISPLAY=:99" >> $GITHUB_ENV
+
+      - name: Restore agent core tests
+        run: dotnet restore src/DevFlow/LeXtudio.DevFlow.Agent.Core.Tests/LeXtudio.DevFlow.Agent.Core.Tests.csproj
 
       - name: Restore Uno agent tests
         run: dotnet restore src/DevFlow/LeXtudio.DevFlow.Agent.Uno.Tests/LeXtudio.DevFlow.Agent.Uno.Tests.csproj
@@ -138,6 +149,9 @@ jobs:
         run: |
           dotnet restore src/Cli/src/LeXtudio.MewUI.Cli.UnitTests/LeXtudio.MewUI.Cli.UnitTests.csproj
           dotnet restore src/Cli/src/LeXtudio.Uno.Cli.UnitTests/LeXtudio.Uno.Cli.UnitTests.csproj
+
+      - name: Run agent core tests
+        run: dotnet test src/DevFlow/LeXtudio.DevFlow.Agent.Core.Tests/LeXtudio.DevFlow.Agent.Core.Tests.csproj --configuration Release --no-restore
 
       - name: Run Uno agent tests
         run: dotnet test src/DevFlow/LeXtudio.DevFlow.Agent.Uno.Tests/LeXtudio.DevFlow.Agent.Uno.Tests.csproj --configuration Release --no-restore

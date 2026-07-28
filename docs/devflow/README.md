@@ -25,6 +25,7 @@ Each guide covers:
 Deeper notes for DevFlow maintainers (not needed for adoption):
 
 - **[Synthesized Drag on Uno-Skia-macOS](technote-uno-macos-drag.md)** — why injecting a real drag/drop gesture is subtle on macOS, and the fixes required to deliver a full `PointerPressed → PointerMoved → PointerReleased` sequence.
+- **[Mouse Injection on LibreWPF/Linux](technote-librewpf-linux-input.md)** — the X11/XTEST backend and the in-process portable fallback that make drag, press/drag-move/release and click work on Linux, and what each route cannot reproduce.
 
 ## FAQ
 

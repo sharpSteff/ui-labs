@@ -493,6 +493,25 @@ public sealed class WpfAgentService : DevFlowAgentServiceBase
         }
 
         var success = await Task.Run(() => TryNativeMouseDrag(resolved.FromX, resolved.FromY, resolved.ToX, resolved.ToY, resolved.Steps)).ConfigureAwait(false);
+        // Not for global drags: those are explicitly screen-space gestures, and
+        // the portable route can only deliver into one of our own windows.
+        if (!success && !request.Global && PortableWpfInputAvailable)
+        {
+            var portableSuccess = await TryPortableWpfMouseDragAsync(resolved.FromX, resolved.FromY, resolved.ToX, resolved.ToY, resolved.Steps).ConfigureAwait(false);
+            if (portableSuccess)
+            {
+                return new
+                {
+                    ok = true,
+                    mode = "portable-wpf",
+                    from = new { x = resolved.FromX, y = resolved.FromY },
+                    to = new { x = resolved.ToX, y = resolved.ToY },
+                    steps = resolved.Steps,
+                    note = PortableFallbackNote
+                };
+            }
+        }
+
         return new
         {
             ok = success,
@@ -539,40 +558,92 @@ public sealed class WpfAgentService : DevFlowAgentServiceBase
         }
 
         var ok = await Task.Run(() => TryNativeMouseClick(resolved.X, resolved.Y, resolved.ClickCount)).ConfigureAwait(false);
+        if (!ok && !request.Global && PortableWpfInputAvailable)
+        {
+            var portableOk = await TryPortableWpfMouseClickAsync(resolved.X, resolved.Y, resolved.ClickCount).ConfigureAwait(false);
+            if (portableOk)
+                return new { ok = true, mode = "portable-wpf", x = resolved.X, y = resolved.Y, note = PortableFallbackNote };
+        }
+
         return new { ok, mode = resolved.Mode, x = resolved.X, y = resolved.Y, note = BuildNativeMouseNote(ok) };
     }
 
     protected override async Task<object?> TryPressResponseAsync(ClickRequest request)
     {
-        if (!CliclickInput.IsAvailable)
-            return new { ok = false, reason = "cliclick is required for decomposed press/drag-move/release and is not installed" };
-
         var x = request.X!.Value;
         var y = request.Y!.Value;
-        var ok = await Task.Run(() => CliclickInput.TryPressDown(x, y)).ConfigureAwait(false);
-        return new { ok, mode = "cliclick", x, y };
+
+        if (CliclickInput.IsAvailable)
+        {
+            var ok = await Task.Run(() => CliclickInput.TryPressDown(x, y)).ConfigureAwait(false);
+            return new { ok, mode = "cliclick", x, y };
+        }
+
+        if (OperatingSystem.IsLinux() && LinuxNativeInput.IsMouseInjectionAvailable)
+        {
+            var ok = await Task.Run(() => LinuxNativeInput.TryPressDown(x, y)).ConfigureAwait(false);
+            return new { ok, mode = "xtest", x, y };
+        }
+
+        if (PortableWpfInputAvailable)
+        {
+            var ok = await TryPortablePressAsync(x, y).ConfigureAwait(false);
+            return new { ok, mode = "portable-wpf", x, y, note = PortableFallbackNote };
+        }
+
+        return new { ok = false, reason = BuildDecomposedInputUnavailableReason() };
     }
 
     protected override async Task<object?> TryDragMoveResponseAsync(ClickRequest request)
     {
-        if (!CliclickInput.IsAvailable)
-            return new { ok = false, reason = "cliclick is required for decomposed press/drag-move/release and is not installed" };
-
         var x = request.X!.Value;
         var y = request.Y!.Value;
-        var ok = await Task.Run(() => CliclickInput.TryDragMoveTo(x, y)).ConfigureAwait(false);
-        return new { ok, mode = "cliclick", x, y };
+
+        if (CliclickInput.IsAvailable)
+        {
+            var ok = await Task.Run(() => CliclickInput.TryDragMoveTo(x, y)).ConfigureAwait(false);
+            return new { ok, mode = "cliclick", x, y };
+        }
+
+        if (OperatingSystem.IsLinux() && LinuxNativeInput.IsMouseInjectionAvailable)
+        {
+            var ok = await Task.Run(() => LinuxNativeInput.TryDragMoveTo(x, y)).ConfigureAwait(false);
+            return new { ok, mode = "xtest", x, y };
+        }
+
+        if (PortableWpfInputAvailable)
+        {
+            var ok = await TryPortableDragMoveAsync(x, y).ConfigureAwait(false);
+            return new { ok, mode = "portable-wpf", x, y, note = PortableFallbackNote };
+        }
+
+        return new { ok = false, reason = BuildDecomposedInputUnavailableReason() };
     }
 
     protected override async Task<object?> TryReleaseResponseAsync(ClickRequest request)
     {
-        if (!CliclickInput.IsAvailable)
-            return new { ok = false, reason = "cliclick is required for decomposed press/drag-move/release and is not installed" };
-
         var x = request.X!.Value;
         var y = request.Y!.Value;
-        var ok = await Task.Run(() => CliclickInput.TryRelease(x, y)).ConfigureAwait(false);
-        return new { ok, mode = "cliclick", x, y };
+
+        if (CliclickInput.IsAvailable)
+        {
+            var ok = await Task.Run(() => CliclickInput.TryRelease(x, y)).ConfigureAwait(false);
+            return new { ok, mode = "cliclick", x, y };
+        }
+
+        if (OperatingSystem.IsLinux() && LinuxNativeInput.IsMouseInjectionAvailable)
+        {
+            var ok = await Task.Run(() => LinuxNativeInput.TryRelease(x, y)).ConfigureAwait(false);
+            return new { ok, mode = "xtest", x, y };
+        }
+
+        if (PortableWpfInputAvailable)
+        {
+            var ok = await TryPortableReleaseAsync(x, y).ConfigureAwait(false);
+            return new { ok, mode = "portable-wpf", x, y, note = PortableFallbackNote };
+        }
+
+        return new { ok = false, reason = BuildDecomposedInputUnavailableReason() };
     }
 
     protected override async Task<object?> TryMoveResponseAsync(MoveRequest request)
@@ -590,6 +661,25 @@ public sealed class WpfAgentService : DevFlowAgentServiceBase
                 var moveOk = await Task.Run(() => CliclickInput.TryMove(resolvedMove.X, resolvedMove.Y)).ConfigureAwait(false);
                 if (moveOk)
                     return new { ok = true, mode = "cliclick", x = resolvedMove.X, y = resolvedMove.Y };
+            }
+        }
+
+        // On Linux, prefer a real XTEST move over the element-level portable
+        // move: it moves the actual pointer, so hover state and any press that
+        // follows stay in the same coordinate space as the cursor.
+        if (OperatingSystem.IsLinux() && LinuxNativeInput.IsMouseInjectionAvailable)
+        {
+            var resolvedNative = await DispatchToApplicationAsync<(bool Ok, double X, double Y)>(() =>
+            {
+                var ok = TryResolveScreenPoint(request.ElementId, request.X, request.Y, out var x, out var y);
+                return (ok, x, y);
+            }).ConfigureAwait(false);
+
+            if (resolvedNative.Ok)
+            {
+                var moveOk = await Task.Run(() => LinuxNativeInput.TryMouseMove(resolvedNative.X, resolvedNative.Y)).ConfigureAwait(false);
+                if (moveOk)
+                    return new { ok = true, mode = "xtest", x = resolvedNative.X, y = resolvedNative.Y };
             }
         }
 
@@ -618,6 +708,13 @@ public sealed class WpfAgentService : DevFlowAgentServiceBase
             return null;
 
         var ok = await Task.Run(() => TryNativeMouseMove(resolved.X, resolved.Y)).ConfigureAwait(false);
+        if (!ok && PortableWpfInputAvailable)
+        {
+            var portableOk = await TryPortableWpfMouseInputAtScreenPointAsync(PortableMouseMove, resolved.X, resolved.Y, PortableButtonNone).ConfigureAwait(false);
+            if (portableOk)
+                return new { ok = true, mode = "portable-wpf", x = resolved.X, y = resolved.Y, note = PortableFallbackNote };
+        }
+
         return new { ok, mode = "native", x = resolved.X, y = resolved.Y, note = BuildNativeMouseNote(ok) };
     }
 
@@ -663,6 +760,58 @@ public sealed class WpfAgentService : DevFlowAgentServiceBase
     private sealed record ResolvedDrag(double FromX, double FromY, double ToX, double ToY, int Steps, string Mode, string? Error);
     private sealed record ResolvedClick(double X, double Y, string Mode, int ClickCount, string? Error);
 
+    // Mirrors the internal System.Windows.PortableInputEventKind /
+    // PortableMouseButton values in the LibreWPF PresentationFramework, which
+    // this file reaches through reflection.
+    private const int PortableMouseMove = 3;
+    private const int PortableMouseDown = 4;
+    private const int PortableMouseUp = 5;
+    private const int PortableButtonNone = 0;
+    private const int PortableButtonLeft = 1;
+
+    private const string PortableFallbackNote =
+        "delivered in-process through the LibreWPF portable input pipeline; the OS cursor did not move.";
+
+    private static bool _portableWpfInputAvailable;
+
+    /// <summary>
+    /// Whether input can be posted straight into LibreWPF's portable input
+    /// pipeline. This is the host-independent route the agent falls back to
+    /// when the OS offers no injection backend (a native Wayland session, or a
+    /// headless host), and it is what makes gestures reachable on Linux at all.
+    /// </summary>
+    private static bool PortableWpfInputAvailable
+    {
+        get
+        {
+            // Only a positive answer is cached: the underlying IsEnabled flips
+            // true once the ProGPU host registers its activation callbacks, so
+            // a false read taken during startup must not be remembered.
+            if (_portableWpfInputAvailable)
+                return true;
+
+            try
+            {
+                var serviceType = typeof(Window).Assembly.GetType("System.Windows.PortableWindowActivationService");
+                var isEnabled = serviceType?.GetProperty("IsEnabled", BindingFlags.NonPublic | BindingFlags.Static);
+                _portableWpfInputAvailable = isEnabled?.GetValue(null) is true;
+            }
+            catch
+            {
+                _portableWpfInputAvailable = false;
+            }
+
+            return _portableWpfInputAvailable;
+        }
+    }
+
+    // A decomposed press/drag-move/release gesture arrives as three separate
+    // agent requests, so the portable route has to remember what it pressed:
+    // unlike XTEST there is no server holding the button state for us.
+    private readonly object _portablePressGate = new();
+    private Window? _portablePressWindow;
+    private bool _portablePressActive;
+
     private async Task<bool> TryPortableWpfMouseDragAsync(double fromX, double fromY, double toX, double toY, int steps)
     {
         if (steps < 1)
@@ -672,11 +821,11 @@ public sealed class WpfAgentService : DevFlowAgentServiceBase
         if (dragWindow == null)
             return false;
 
-        if (!await TryProcessPortableWpfMouseInputAsync(dragWindow, 3, fromX, fromY, 0).ConfigureAwait(false))
+        if (!await TryProcessPortableWpfMouseInputAsync(dragWindow, PortableMouseMove, fromX, fromY, PortableButtonNone).ConfigureAwait(false))
             return false;
         await Task.Delay(16).ConfigureAwait(false);
 
-        if (!await TryProcessPortableWpfMouseInputAsync(dragWindow, 4, fromX, fromY, 1).ConfigureAwait(false))
+        if (!await TryProcessPortableWpfMouseInputAsync(dragWindow, PortableMouseDown, fromX, fromY, PortableButtonLeft).ConfigureAwait(false))
             return false;
         await Task.Delay(200).ConfigureAwait(false);
 
@@ -685,12 +834,102 @@ public sealed class WpfAgentService : DevFlowAgentServiceBase
             var t = (double)i / steps;
             var x = fromX + (toX - fromX) * t;
             var y = fromY + (toY - fromY) * t;
-            if (!await TryProcessPortableWpfMouseInputAsync(dragWindow, 3, x, y, 0).ConfigureAwait(false))
+            if (!await TryProcessPortableWpfMouseInputAsync(dragWindow, PortableMouseMove, x, y, PortableButtonNone).ConfigureAwait(false))
                 return false;
             await Task.Delay(16).ConfigureAwait(false);
         }
 
-        return await TryProcessPortableWpfMouseInputAsync(dragWindow, 5, toX, toY, 1).ConfigureAwait(false);
+        return await TryProcessPortableWpfMouseInputAsync(dragWindow, PortableMouseUp, toX, toY, PortableButtonLeft).ConfigureAwait(false);
+    }
+
+    private async Task<bool> TryPortableWpfMouseClickAsync(double x, double y, int clickCount)
+    {
+        var window = await ResolvePortableWpfInputWindowAsync(x, y).ConfigureAwait(false);
+        if (window == null)
+            return false;
+
+        if (!await TryProcessPortableWpfMouseInputAsync(window, PortableMouseMove, x, y, PortableButtonNone).ConfigureAwait(false))
+            return false;
+
+        for (var c = 0; c < Math.Max(1, clickCount); c++)
+        {
+            if (!await TryProcessPortableWpfMouseInputAsync(window, PortableMouseDown, x, y, PortableButtonLeft).ConfigureAwait(false))
+                return false;
+            await Task.Delay(50).ConfigureAwait(false);
+            if (!await TryProcessPortableWpfMouseInputAsync(window, PortableMouseUp, x, y, PortableButtonLeft).ConfigureAwait(false))
+                return false;
+            if (c < clickCount - 1)
+                await Task.Delay(80).ConfigureAwait(false);
+        }
+
+        return true;
+    }
+
+    private async Task<bool> TryPortableWpfMouseInputAtScreenPointAsync(int kind, double x, double y, int button)
+    {
+        var window = await ResolvePortableWpfInputWindowAsync(x, y).ConfigureAwait(false);
+        if (window == null)
+            return false;
+
+        return await TryProcessPortableWpfMouseInputAsync(window, kind, x, y, button).ConfigureAwait(false);
+    }
+
+    private async Task<bool> TryPortablePressAsync(double x, double y)
+    {
+        var window = await ResolvePortableWpfInputWindowAsync(x, y).ConfigureAwait(false);
+        if (window == null)
+            return false;
+
+        if (!await TryProcessPortableWpfMouseInputAsync(window, PortableMouseMove, x, y, PortableButtonNone).ConfigureAwait(false))
+            return false;
+
+        if (!await TryProcessPortableWpfMouseInputAsync(window, PortableMouseDown, x, y, PortableButtonLeft).ConfigureAwait(false))
+            return false;
+
+        lock (_portablePressGate)
+        {
+            _portablePressWindow = window;
+            _portablePressActive = true;
+        }
+
+        return true;
+    }
+
+    private async Task<bool> TryPortableDragMoveAsync(double x, double y)
+    {
+        Window? window;
+        lock (_portablePressGate)
+        {
+            if (!_portablePressActive)
+                return false;
+            window = _portablePressWindow;
+        }
+
+        if (window == null)
+            return false;
+
+        // Keep posting to the pressed window even once the pointer leaves it:
+        // that is what a captured drag does, and WPF's own capture routing then
+        // forwards the move to whatever element owns the gesture.
+        return await TryProcessPortableWpfMouseInputAsync(window, PortableMouseMove, x, y, PortableButtonNone).ConfigureAwait(false);
+    }
+
+    private async Task<bool> TryPortableReleaseAsync(double x, double y)
+    {
+        Window? window;
+        lock (_portablePressGate)
+        {
+            if (!_portablePressActive)
+                return false;
+            window = _portablePressWindow;
+            _portablePressActive = false;
+            _portablePressWindow = null;
+        }
+
+        if (window == null)
+            return false;
+
+        return await TryProcessPortableWpfMouseInputAsync(window, PortableMouseUp, x, y, PortableButtonLeft).ConfigureAwait(false);
     }
 
     private Task<Window?> ResolvePortableWpfInputWindowAsync(double screenX, double screenY)
@@ -857,6 +1096,9 @@ public sealed class WpfAgentService : DevFlowAgentServiceBase
         if (OperatingSystem.IsMacOS())
             return MacOSNativeInput.TryMouseDrag(fromX, fromY, toX, toY, steps);
 
+        if (OperatingSystem.IsLinux())
+            return LinuxNativeInput.TryMouseDrag(fromX, fromY, toX, toY, steps);
+
         return false;
     }
 
@@ -868,6 +1110,9 @@ public sealed class WpfAgentService : DevFlowAgentServiceBase
         if (OperatingSystem.IsMacOS())
             return MacOSNativeInput.TryMouseClick(x, y, clickCount);
 
+        if (OperatingSystem.IsLinux())
+            return LinuxNativeInput.TryMouseClick(x, y, clickCount);
+
         return false;
     }
 
@@ -875,6 +1120,9 @@ public sealed class WpfAgentService : DevFlowAgentServiceBase
     {
         if (OperatingSystem.IsMacOS())
             return MacOSNativeInput.TryMouseMove(x, y);
+
+        if (OperatingSystem.IsLinux())
+            return LinuxNativeInput.TryMouseMove(x, y);
 
         return false;
     }
@@ -887,10 +1135,35 @@ public sealed class WpfAgentService : DevFlowAgentServiceBase
         if (OperatingSystem.IsMacOS())
             return "CGEventPost may require Accessibility (TCC) permission for the host process.";
 
+        if (OperatingSystem.IsLinux())
+        {
+            return LinuxNativeInput.MouseInjectionUnavailableReason is { } reason
+                ? $"native mouse injection (X11 XTEST) is unavailable: {reason}"
+                : "the X11 XTEST injection call failed.";
+        }
+
         if (!OperatingSystem.IsWindows())
-            return "native mouse injection is supported on Windows and macOS only.";
+        {
+            return "native mouse injection is supported on Windows, macOS and Linux (X11/XWayland); this host is "
+                + $"{System.Runtime.InteropServices.RuntimeInformation.OSDescription}.";
+        }
 
         return null;
+    }
+
+    private static string BuildDecomposedInputUnavailableReason()
+    {
+        if (OperatingSystem.IsLinux())
+        {
+            return LinuxNativeInput.MouseInjectionUnavailableReason is { } reason
+                ? $"decomposed press/drag-move/release needs X11 XTEST or the LibreWPF portable input pipeline; XTEST is unavailable: {reason}"
+                : "decomposed press/drag-move/release is unavailable on this host.";
+        }
+
+        if (OperatingSystem.IsMacOS())
+            return "cliclick is required for decomposed press/drag-move/release and is not installed";
+
+        return "decomposed press/drag-move/release is unavailable on this host.";
     }
 
     private bool TryResolveScreenPoint(string? elementId, double? winX, double? winY, out double x, out double y)
