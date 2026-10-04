@@ -323,11 +323,28 @@ public sealed class AvaloniaAgentService : DevFlowAgentServiceBase
         if (TryGetScreenCenter(visual) is not { } center || TopLevel.GetTopLevel(visual) is not { } topLevel)
             return null;
 
-        var local = visual.TranslatePoint(new Point(visual.Bounds.Width / 2d, visual.Bounds.Height / 2d), topLevel);
-        if (local is not { } hitPoint || topLevel.InputHitTest(hitPoint) is not Visual hit)
-            return null;
+        // The centre first, then a grid over the element: a glyph button's centre, say, can be transparent to
+        // the pointer, in which case a user aims at the drawn part.
+        var size = visual.Bounds.Size;
+        foreach (var (fx, fy) in HitTestFractions)
+        {
+            var point = new Point(size.Width * fx, size.Height * fy);
+            if (visual.TranslatePoint(point, topLevel) is not { } hitPoint || topLevel.InputHitTest(hitPoint) is not Visual hit)
+                continue;
 
-        return hit == visual || visual.IsVisualAncestorOf(hit) ? center : null;
+            if (hit == visual || visual.IsVisualAncestorOf(hit))
+                return fx == 0.5 && fy == 0.5 ? center : visual.PointToScreen(point);
+        }
+
+        return null;
+    }
+
+    private static readonly (double X, double Y)[] HitTestFractions = CreateHitTestFractions();
+
+    private static (double X, double Y)[] CreateHitTestFractions()
+    {
+        var steps = new[] { 0.5, 0.35, 0.65, 0.2, 0.8 };
+        return steps.SelectMany(y => steps.Select(x => (x, y))).ToArray();
     }
 
     private static bool CanInjectNativeClicks
@@ -372,10 +389,15 @@ public sealed class AvaloniaAgentService : DevFlowAgentServiceBase
                 if (!button.IsEffectivelyEnabled)
                     return false;
 
-                if (s_buttonOnClick != null)
-                    s_buttonOnClick.Invoke(button, null);
-                else
-                    button.RaiseEvent(new RoutedEventArgs(Button.ClickEvent, button));
+                // Posted, so that a click which opens a modal dialog does not hold up the request until the
+                // dialog closes.
+                Dispatcher.UIThread.Post(() =>
+                {
+                    if (s_buttonOnClick != null)
+                        s_buttonOnClick.Invoke(button, null);
+                    else
+                        button.RaiseEvent(new RoutedEventArgs(Button.ClickEvent, button));
+                });
                 return true;
             }
 

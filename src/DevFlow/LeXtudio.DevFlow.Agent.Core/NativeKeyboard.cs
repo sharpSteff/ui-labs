@@ -35,6 +35,11 @@ public static class NativeKeyboard
         if (!TryParse(chord, out var modifiers, out var key))
             return false;
 
+        // A printable character on its own is text: typed as such, it arrives as that character whatever
+        // the keyboard layout.
+        if (modifiers.Count == 0 && chord.Trim().Length == 1)
+            return TrySendText(chord.Trim());
+
         if (OperatingSystem.IsWindows())
             return WindowsNativeInput.TrySendChord(modifiers.Select(m => m.VirtualKey).Append(key.VirtualKey).ToArray());
 
@@ -59,6 +64,21 @@ public static class NativeKeyboard
                     CliclickInput.TryKeyUp(modifiers[i].Cliclick!);
             }
         }
+
+        return false;
+    }
+
+    /// <summary>Types text with native input.</summary>
+    public static bool TrySendText(string text)
+    {
+        if (OperatingSystem.IsWindows())
+            return WindowsNativeInput.TrySendUnicodeText(text);
+
+        if (OperatingSystem.IsLinux())
+            return LinuxNativeInput.SendUnicodeText(text);
+
+        if (OperatingSystem.IsMacOS() && CliclickInput.IsAvailable)
+            return CliclickInput.TryType(text);
 
         return false;
     }

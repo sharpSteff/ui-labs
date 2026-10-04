@@ -316,6 +316,9 @@ public static class CliclickInput
     /// <summary>Presses and releases a key in one call - for a single keystroke, not a held key.</summary>
     public static bool TryKeyPress(string key) => Run($"kp:{key}");
 
+    /// <summary>Types text, character by character.</summary>
+    public static bool TryType(string text) => Run($"t:{text}");
+
     private static bool Run(params string[] arguments)
     {
         var exe = _path.Value;

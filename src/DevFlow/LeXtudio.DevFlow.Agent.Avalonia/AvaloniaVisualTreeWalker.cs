@@ -28,6 +28,40 @@ public class AvaloniaVisualTreeWalker : IVisualTreeWalker
     // guards against reference cycles.
     private readonly HashSet<StyledElement> _visited = new(ReferenceEqualityComparer.Instance);
 
+    // Open popups - menus, context menus, combo box drop-downs, tooltips - are top levels of their own,
+    // which desktop.Windows does not list. They are tracked from the moment the first walker exists.
+    private static readonly List<WeakReference<Popup>> s_openPopups = new();
+    private static int s_trackingPopups;
+
+    public AvaloniaVisualTreeWalker()
+    {
+        if (Interlocked.Exchange(ref s_trackingPopups, 1) == 0)
+            Popup.IsOpenProperty.Changed.AddClassHandler<Popup>((popup, _) => OnPopupIsOpenChanged(popup));
+    }
+
+    private static void OnPopupIsOpenChanged(Popup popup)
+    {
+        lock (s_openPopups)
+        {
+            s_openPopups.RemoveAll(r => !r.TryGetTarget(out var p) || p == popup);
+            if (popup.IsOpen)
+                s_openPopups.Add(new WeakReference<Popup>(popup));
+        }
+    }
+
+    /// <summary>The hosts of the open popups, in opening order. Must be called on the UI thread.</summary>
+    public static IReadOnlyList<StyledElement> GetOpenPopupHosts()
+    {
+        lock (s_openPopups)
+        {
+            return s_openPopups
+                .Select(r => r.TryGetTarget(out var popup) && popup.IsOpen && popup.Child is Visual child ? TopLevel.GetTopLevel(child) : null)
+                .Where(host => host != null && host is not Window)
+                .Select(host => (StyledElement)host!)
+                .ToList();
+        }
+    }
+
     /// <summary>The top-level windows of the application, in opening order.</summary>
     public static IReadOnlyList<Window> GetWindows()
     {
@@ -56,6 +90,13 @@ public class AvaloniaVisualTreeWalker : IVisualTreeWalker
         {
             if (_visited.Add(window))
                 roots.Add(BuildElementInfo(window, null));
+        }
+
+        // Popups that render as overlays are part of their window's tree already; the others are roots.
+        foreach (var host in GetOpenPopupHosts())
+        {
+            if (_visited.Add(host))
+                roots.Add(BuildElementInfo(host, null));
         }
 
         return roots;
@@ -120,7 +161,8 @@ public class AvaloniaVisualTreeWalker : IVisualTreeWalker
             Framework = "avalonia",
             AutomationId = GetAutomationId(element),
             Text = GetText(element),
-            IsVisible = element is not Visual visual || visual.IsVisible,
+            // Effective visibility, like WPF's IsVisible: the items of a closed menu, say, are not visible.
+            IsVisible = element is not Visual visual || (visual.IsEffectivelyVisible && visual.IsAttachedToVisualTree()),
             IsEnabled = element is not InputElement input || input.IsEffectivelyEnabled,
             IsFocused = element is InputElement { IsFocused: true },
             Opacity = element is Visual v ? v.Opacity : 1d,
@@ -139,7 +181,9 @@ public class AvaloniaVisualTreeWalker : IVisualTreeWalker
     {
         return _stableIds.GetValue(element, static obj =>
         {
-            if (!string.IsNullOrEmpty(obj.Name))
+            // A name is a readable id, but only outside templates: every instance of a template has the same
+            // part names (each tab's PART_CloseButton, say), which would make the id ambiguous.
+            if (!string.IsNullOrEmpty(obj.Name) && obj.TemplatedParent == null)
                 return obj.Name;
             return "_avaloniadevflow_" + Guid.NewGuid().ToString("N").Substring(0, 12);
         });

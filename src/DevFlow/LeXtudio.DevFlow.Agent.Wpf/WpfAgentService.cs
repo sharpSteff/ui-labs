@@ -168,12 +168,13 @@ public sealed class WpfAgentService : DevFlowAgentServiceBase
                ?? Task.FromResult(new List<Microsoft.Maui.DevFlow.Agent.Core.ElementInfo>());
     }
 
-#if LIBREWPF
+    // Runs the [DevFlowUIThread] actions on the dispatcher.
     protected override Task<T> DispatchOnUIThreadAsync<T>(Func<T> callback)
     {
         return DispatchToApplicationAsync(callback);
     }
 
+#if LIBREWPF
     protected override Task<IReadOnlyList<object>> GetInvokeActionTargetsAsync()
     {
         return Application.Current?.Dispatcher.InvokeAsync<IReadOnlyList<object>>(() =>

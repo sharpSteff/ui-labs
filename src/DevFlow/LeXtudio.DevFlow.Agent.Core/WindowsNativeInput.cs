@@ -294,6 +294,13 @@ public static class WindowsNativeInput
 
     private static INPUT CreateVirtualKeyInput(ushort key, bool keyUp)
     {
+        // With its scan code and, for the navigation keys, the extended-key flag, so that applications
+        // which read either (End or an arrow key rather than the numeric keypad's) see the key a
+        // keyboard would send.
+        var flags = keyUp ? KeyEventKeyUp : 0;
+        if (IsExtendedKey(key))
+            flags |= KeyEventExtendedKey;
+
         return new INPUT
         {
             type = InputKeyboard,
@@ -302,11 +309,17 @@ public static class WindowsNativeInput
                 ki = new KEYBDINPUT
                 {
                     wVk = key,
-                    dwFlags = keyUp ? KeyEventKeyUp : 0,
+                    wScan = (ushort)MapVirtualKey(key, MapVkVkToVsc),
+                    dwFlags = flags,
                 }
             }
         };
     }
+
+    private static bool IsExtendedKey(ushort key)
+        => key is >= 0x21 and <= 0x28 // PageUp, PageDown, End, Home, arrow keys
+            or 0x2D or 0x2E // Insert, Delete
+            or 0x5B or 0x5C; // Windows keys
 
     private const uint MouseEventMove = 0x0001;
     private const uint MouseEventLeftDown = 0x0002;
@@ -316,6 +329,8 @@ public static class WindowsNativeInput
     private const uint InputKeyboard = 1;
     private const uint KeyEventKeyUp = 0x0002;
     private const uint KeyEventUnicode = 0x0004;
+    private const uint KeyEventExtendedKey = 0x0001;
+    private const uint MapVkVkToVsc = 0;
 
     private const uint WmMouseMove = 0x0200;
     private const uint WmLButtonDown = 0x0201;
@@ -350,6 +365,9 @@ public static class WindowsNativeInput
         public uint time;
         public UIntPtr dwExtraInfo;
     }
+
+    [DllImport("user32.dll")]
+    private static extern uint MapVirtualKey(uint uCode, uint uMapType);
 
     [DllImport("user32.dll", SetLastError = true)]
     private static extern uint SendInput(uint nInputs, INPUT[] pInputs, int cbSize);

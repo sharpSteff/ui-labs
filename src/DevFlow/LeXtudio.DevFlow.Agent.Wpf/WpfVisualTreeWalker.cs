@@ -118,7 +118,9 @@ public class WpfVisualTreeWalker : IVisualTreeWalker
     {
         return _stableIds.GetValue(element, static obj =>
         {
-            if (obj is FrameworkElement fe && !string.IsNullOrEmpty(fe.Name))
+            // A name is a readable id, but only outside templates: every instance of a template has the same
+            // part names (each tab's PART_CloseButton, say), which would make the id ambiguous.
+            if (obj is FrameworkElement fe && !string.IsNullOrEmpty(fe.Name) && fe.TemplatedParent == null)
                 return fe.Name;
             return "_wpfdevflow_" + Guid.NewGuid().ToString("N").Substring(0, 12);
         });
