@@ -41,6 +41,15 @@ public class WpfVisualTreeWalker : IVisualTreeWalker
             if (_visited.Add(window))
                 roots.Add(BuildElementInfo(window, null));
         }
+
+        // Open popups - menus, context menus, combo box drop-downs, tooltips - have presentation sources
+        // of their own, which Application.Windows does not list.
+        foreach (var source in PresentationSource.CurrentSources.OfType<PresentationSource>().ToList())
+        {
+            if (source.RootVisual is { } root && root is not Window && !source.IsDisposed && _visited.Add(root))
+                roots.Add(BuildElementInfo(root, null));
+        }
+
         return roots;
     }
 
