@@ -349,11 +349,27 @@ public static class WindowsNativeInput
         public INPUTUNION U;
     }
 
+    // The union has to have the size of its largest member, MOUSEINPUT: SendInput rejects every input
+    // (returns 0) when cbSize is not sizeof(INPUT), which a union holding only KEYBDINPUT made it.
     [StructLayout(LayoutKind.Explicit)]
     private struct INPUTUNION
     {
         [FieldOffset(0)]
+        public MOUSEINPUT mi;
+
+        [FieldOffset(0)]
         public KEYBDINPUT ki;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct MOUSEINPUT
+    {
+        public int dx;
+        public int dy;
+        public uint mouseData;
+        public uint dwFlags;
+        public uint time;
+        public UIntPtr dwExtraInfo;
     }
 
     [StructLayout(LayoutKind.Sequential)]

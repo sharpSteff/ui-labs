@@ -237,6 +237,9 @@ public class WpfVisualTreeWalker : IVisualTreeWalker
                 props["automationId"] = automationId;
         }
 
+        if (element is ToggleButton toggleButton)
+            props["isChecked"] = toggleButton.IsChecked?.ToString().ToLowerInvariant() ?? "null";
+
         return props;
     }
 

@@ -462,10 +462,16 @@ public sealed class AvaloniaAgentService : DevFlowAgentServiceBase
     protected override async Task<object?> TryKeyAsync(string? elementId, string? key, string? text)
     {
         // Without a target element, a key goes to the focused window, as a user's key press does.
-        if (string.IsNullOrWhiteSpace(elementId) && NativeKeyboard.IsAvailable && NativeKeyboard.CanSend(key))
+        if (string.IsNullOrWhiteSpace(elementId) && !string.IsNullOrWhiteSpace(key))
         {
-            await RunOnUIThreadAsync(ActivateMainWindowIfNoneIsActive).ConfigureAwait(false);
-            if (await Task.Run(() => NativeKeyboard.TrySendChord(key!)).ConfigureAwait(false))
+            if (UseNativeKeyboard && NativeKeyboard.CanSend(key))
+            {
+                await RunOnUIThreadAsync(ActivateMainWindowIfNoneIsActive).ConfigureAwait(false);
+                if (await Task.Run(() => NativeKeyboard.TrySendChord(key!)).ConfigureAwait(false))
+                    return CreateSuccessResult(SimulationModes.Native, elementId, key: key, text: text);
+            }
+
+            if (await RunOnUIThreadAsync(() => TryRaiseRawKey(key!)).ConfigureAwait(false))
                 return CreateSuccessResult(SimulationModes.Native, elementId, key: key, text: text);
         }
 
@@ -508,6 +514,122 @@ public sealed class AvaloniaAgentService : DevFlowAgentServiceBase
 
             return null;
         }).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Whether keys go through the operating system's input (SendInput, XTest). On macOS, keystrokes posted
+    /// with cliclick do not reliably reach an application that was not started as an app bundle, so keys
+    /// are raised as raw Avalonia input there instead. DEVFLOW_AVALONIA_KEYS=raw selects that everywhere.
+    /// </summary>
+    private static bool UseNativeKeyboard
+        => NativeKeyboard.IsAvailable
+            && !OperatingSystem.IsMacOS()
+            && !string.Equals(Environment.GetEnvironmentVariable("DEVFLOW_AVALONIA_KEYS"), "raw", StringComparison.OrdinalIgnoreCase);
+
+    private static readonly Dictionary<string, Key> KeyAliases = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ["esc"] = Key.Escape,
+        ["return"] = Key.Enter,
+        ["del"] = Key.Delete,
+        ["backspace"] = Key.Back,
+        ["pageup"] = Key.PageUp,
+        ["pagedown"] = Key.PageDown,
+    };
+
+    /// <summary>
+    /// Raises a key or key chord ("Escape", "Ctrl+Tab", "x") as raw input of the active window - the input a
+    /// keyboard produces, entering Avalonia where the platform's does, so key bindings, menus and text input
+    /// all see it. A single printable character is also raised as text input. Must run on the UI thread.
+    /// </summary>
+    /// <remarks>
+    /// The raw input types are public at run time but left out of Avalonia's reference assemblies, so they
+    /// are reached through reflection.
+    /// </remarks>
+    private static bool TryRaiseRawKey(string chord)
+    {
+        var window = AvaloniaVisualTreeWalker.GetWindows().FirstOrDefault(w => w.IsActive) ?? AvaloniaVisualTreeWalker.GetMainWindow();
+        if (window == null || !RawInput.IsAvailable)
+            return false;
+
+        var parts = chord.Split('+', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
+        if (parts.Length == 0)
+            return false;
+
+        var modifiers = RawInputModifiers.None;
+        foreach (var part in parts[..^1])
+        {
+            modifiers |= part.ToLowerInvariant() switch
+            {
+                "ctrl" or "control" => RawInputModifiers.Control,
+                "shift" => RawInputModifiers.Shift,
+                "alt" => RawInputModifiers.Alt,
+                "win" or "meta" or "cmd" => RawInputModifiers.Meta,
+                _ => RawInputModifiers.None,
+            };
+        }
+
+        var name = parts[^1];
+        string? text = name.Length == 1 && modifiers is RawInputModifiers.None or RawInputModifiers.Shift ? name : null;
+        Key key;
+        if (KeyAliases.TryGetValue(name, out var alias))
+            key = alias;
+        else if (name.Length == 1 && char.IsLetter(name[0]))
+            key = Enum.Parse<Key>(name.ToUpperInvariant());
+        else if (name.Length == 1 && char.IsDigit(name[0]))
+            key = Enum.Parse<Key>("D" + name);
+        else if (!Enum.TryParse(name, ignoreCase: true, out key))
+            key = Key.None;
+
+        if (key == Key.None && text == null)
+            return false;
+
+        return RawInput.TryRaise(window, key, modifiers, text);
+    }
+
+    /// <summary>Reflection over the raw input API of Avalonia (see <see cref="TryRaiseRawKey"/>).</summary>
+    private static class RawInput
+    {
+        private const BindingFlags Instance = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic;
+        private const BindingFlags Static = BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic;
+
+        private static readonly Assembly s_base = typeof(KeyboardDevice).Assembly;
+        private static readonly PropertyInfo? s_inputRoot = typeof(TopLevel).GetProperty("InputRoot", Instance);
+        private static readonly PropertyInfo? s_platformInput = typeof(TopLevel).Assembly.GetType("Avalonia.Platform.ITopLevelImpl")?.GetProperty("Input");
+        private static readonly PropertyInfo? s_keyboard = typeof(KeyboardDevice).GetProperty("Instance", Static);
+        private static readonly Type? s_rawKeyEventType = s_base.GetType("Avalonia.Input.Raw.RawKeyEventType");
+        private static readonly Type? s_keyDeviceType = s_base.GetType("Avalonia.Input.KeyDeviceType");
+        private static readonly ConstructorInfo? s_rawKeyArgs = s_base.GetType("Avalonia.Input.Raw.RawKeyEventArgs")?.GetConstructors().FirstOrDefault(c => c.GetParameters().Length == 9);
+        private static readonly ConstructorInfo? s_rawTextArgs = s_base.GetType("Avalonia.Input.Raw.RawTextInputEventArgs")?.GetConstructors().FirstOrDefault(c => c.GetParameters().Length == 4);
+
+        public static bool IsAvailable
+            => s_inputRoot != null && s_platformInput != null && s_keyboard != null && s_rawKeyEventType != null
+                && s_keyDeviceType != null && s_rawKeyArgs != null && s_rawTextArgs != null;
+
+        public static bool TryRaise(TopLevel topLevel, Key key, RawInputModifiers modifiers, string? text)
+        {
+            try
+            {
+                var root = s_inputRoot!.GetValue(topLevel);
+                var platformImpl = typeof(TopLevel).GetProperty("PlatformImpl", Instance)?.GetValue(topLevel);
+                if (root == null || platformImpl == null || s_platformInput!.GetValue(platformImpl) is not Delegate input)
+                    return false;
+
+                var keyboard = s_keyboard!.GetValue(null);
+                var timestamp = (ulong)Environment.TickCount64;
+                var keyboardDeviceType = Enum.Parse(s_keyDeviceType!, "Keyboard");
+                if (key != Key.None)
+                    input.DynamicInvoke(s_rawKeyArgs!.Invoke(new[] { keyboard, timestamp, root, Enum.Parse(s_rawKeyEventType!, "KeyDown"), key, modifiers, PhysicalKey.None, text, keyboardDeviceType }));
+                if (text != null)
+                    input.DynamicInvoke(s_rawTextArgs!.Invoke(new[] { keyboard, timestamp, root, text }));
+                if (key != Key.None)
+                    input.DynamicInvoke(s_rawKeyArgs!.Invoke(new[] { keyboard, timestamp, root, Enum.Parse(s_rawKeyEventType!, "KeyUp"), key, modifiers, PhysicalKey.None, text, keyboardDeviceType }));
+                return true;
+            }
+            catch
+            {
+                return false;
+            }
+        }
     }
 
     /// <summary>Gives the application the keyboard focus unless one of its windows has it already.</summary>

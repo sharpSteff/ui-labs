@@ -272,6 +272,9 @@ public class AvaloniaVisualTreeWalker : IVisualTreeWalker
         if (element.Classes.Count > 0)
             props["classes"] = string.Join(" ", element.Classes);
 
+        if (element is ToggleButton { IsChecked: var isChecked })
+            props["isChecked"] = isChecked?.ToString().ToLowerInvariant() ?? "null";
+
         if (element is Window window)
         {
             // The window's position in screen pixels, the coordinate space of the global input actions.
