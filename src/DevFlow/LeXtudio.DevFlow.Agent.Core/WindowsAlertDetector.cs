@@ -55,7 +55,7 @@ public static class WindowsAlertDetector
             return false;
 
         var target = buttonLabel != null
-            ? buttons.FirstOrDefault(b => string.Equals(b.Text, buttonLabel, StringComparison.OrdinalIgnoreCase))
+            ? buttons.FirstOrDefault(b => string.Equals(StripAccelerator(b.Text), StripAccelerator(buttonLabel), StringComparison.OrdinalIgnoreCase))
             : buttons.FirstOrDefault();
 
         if (target == null)
@@ -64,6 +64,9 @@ public static class WindowsAlertDetector
         SendMessage(target.Handle, BM_CLICK, nint.Zero, nint.Zero);
         return true;
     }
+
+    // Dialog buttons carry their access key as an ampersand ("&Yes"), which a caller asking for "Yes" leaves out.
+    private static string StripAccelerator(string text) => text.Replace("&", string.Empty, StringComparison.Ordinal);
 
     private static AlertInfo BuildAlertInfo(nint dialog)
     {

@@ -259,9 +259,19 @@ public sealed class WpfAgentService : DevFlowAgentServiceBase
     /// <summary>
     /// Whether synthetic input aimed inside this window can reach it; see the WinForms agent for why.
     /// </summary>
+    // Native input goes to the foreground window, so the target's window is brought there first - what a
+    // user's click on it would do.
     private static bool CanWindowReceiveNativeInput(Window? window)
-        => window is { IsLoaded: true } && WindowsNativeInput.IsForegroundWindow(
-            new System.Windows.Interop.WindowInteropHelper(window).Handle);
+    {
+        if (window is not { IsLoaded: true })
+            return false;
+
+        var handle = new System.Windows.Interop.WindowInteropHelper(window).Handle;
+        if (!WindowsNativeInput.IsForegroundWindow(handle))
+            WindowsNativeInput.TryBringToForeground(handle);
+
+        return WindowsNativeInput.IsForegroundWindow(handle);
+    }
 
     protected override async Task<object?> TryTapResponseAsync(string elementId)
     {
@@ -1222,6 +1232,22 @@ public sealed class WpfAgentService : DevFlowAgentServiceBase
         {
             if (target is ButtonBase buttonBase)
             {
+                // Through the automation peer, which clicks the button the way a user does - the Click event,
+                // the Command, the toggle of a toggle button - and does so asynchronously, so a click that
+                // opens a modal dialog does not hold up the request.
+                var peer = System.Windows.Automation.Peers.UIElementAutomationPeer.CreatePeerForElement(buttonBase);
+                if (peer?.GetPattern(System.Windows.Automation.Peers.PatternInterface.Invoke) is System.Windows.Automation.Provider.IInvokeProvider invoke)
+                {
+                    invoke.Invoke();
+                    return true;
+                }
+
+                if (peer?.GetPattern(System.Windows.Automation.Peers.PatternInterface.Toggle) is System.Windows.Automation.Provider.IToggleProvider toggle)
+                {
+                    toggle.Toggle();
+                    return true;
+                }
+
                 buttonBase.RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent, buttonBase));
                 return true;
             }
