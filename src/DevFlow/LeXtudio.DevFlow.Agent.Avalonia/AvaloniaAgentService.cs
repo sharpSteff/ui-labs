@@ -320,11 +320,16 @@ public sealed class AvaloniaAgentService : DevFlowAgentServiceBase
         if (!CanInjectNativeClicks || ResolveElementObject(elementId) is not Visual visual)
             return null;
 
-        // An application that none of whose windows is active is not the one in front - on macOS, one that
-        // was not started as an app bundle may never get there by itself - and its first click would only
-        // bring it forward. Activate the target's window, as that first click would.
-        if (TopLevel.GetTopLevel(visual) is Window targetWindow && !AvaloniaVisualTreeWalker.GetWindows().Any(w => w.IsActive))
-            targetWindow.Activate();
+        // The first click on a window that is not active - another window of the app is, or the app is not
+        // the one in front (on macOS, one not started as an app bundle may never get there by itself) - can be
+        // spent bringing the window forward. Activate the target's window first, as that click would.
+        if (TopLevel.GetTopLevel(visual) is Window targetWindow)
+        {
+            if (OperatingSystem.IsWindows())
+                BringToForeground(targetWindow);
+            else if (!targetWindow.IsActive)
+                targetWindow.Activate();
+        }
 
         if (TryGetScreenCenter(visual) is not { } center || TopLevel.GetTopLevel(visual) is not { } topLevel)
             return null;
@@ -641,12 +646,45 @@ public sealed class AvaloniaAgentService : DevFlowAgentServiceBase
     /// <summary>Gives the application the keyboard focus unless one of its windows has it already.</summary>
     private static bool ActivateMainWindowIfNoneIsActive()
     {
-        if (AvaloniaVisualTreeWalker.GetWindows().Any(w => w.IsActive))
+        var windows = AvaloniaVisualTreeWalker.GetWindows().ToList();
+        if (OperatingSystem.IsWindows())
+        {
+            // Native keys go to the foreground window, which can belong to another process although
+            // Avalonia still reports one of ours as active.
+            if (!windows.Any(w => WindowsNativeInput.IsForegroundWindow(GetHandle(w)))
+                && (windows.FirstOrDefault(w => w.IsActive) ?? AvaloniaVisualTreeWalker.GetMainWindow()) is { } window)
+            {
+                BringToForeground(window);
+            }
+
+            return true;
+        }
+
+        if (windows.Any(w => w.IsActive))
             return true;
 
         AvaloniaVisualTreeWalker.GetMainWindow()?.Activate();
         return true;
     }
+
+    /// <summary>
+    /// Brings a window to the foreground on Windows, where <see cref="Window.Activate"/> from a process that
+    /// is not in the foreground only flashes its taskbar button.
+    /// </summary>
+    private static void BringToForeground(Window window)
+    {
+        var handle = GetHandle(window);
+        if (handle == IntPtr.Zero)
+        {
+            window.Activate();
+            return;
+        }
+
+        if (!WindowsNativeInput.IsForegroundWindow(handle))
+            WindowsNativeInput.TryBringToForeground(handle);
+    }
+
+    private static IntPtr GetHandle(Window window) => window.TryGetPlatformHandle()?.Handle ?? IntPtr.Zero;
 
     protected override Task<bool> TryBackAsync()
     {
