@@ -320,6 +320,12 @@ public sealed class AvaloniaAgentService : DevFlowAgentServiceBase
         if (!CanInjectNativeClicks || ResolveElementObject(elementId) is not Visual visual)
             return null;
 
+        // An application that none of whose windows is active is not the one in front - on macOS, one that
+        // was not started as an app bundle may never get there by itself - and its first click would only
+        // bring it forward. Activate the target's window, as that first click would.
+        if (TopLevel.GetTopLevel(visual) is Window targetWindow && !AvaloniaVisualTreeWalker.GetWindows().Any(w => w.IsActive))
+            targetWindow.Activate();
+
         if (TryGetScreenCenter(visual) is not { } center || TopLevel.GetTopLevel(visual) is not { } topLevel)
             return null;
 
