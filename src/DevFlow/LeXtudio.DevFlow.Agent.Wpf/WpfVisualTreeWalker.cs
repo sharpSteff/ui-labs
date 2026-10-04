@@ -111,7 +111,8 @@ public class WpfVisualTreeWalker : IVisualTreeWalker
             Text = GetText(element),
             IsVisible = IsElementVisible(element),
             IsEnabled = GetIsEnabled(element),
-            IsFocused = element is UIElement { IsKeyboardFocused: true },
+            // Logical focus too: it is what the keyboard focus returns to when the window is activated.
+            IsFocused = element is UIElement { IsKeyboardFocused: true } or UIElement { IsFocused: true },
             Bounds = ResolveBounds(element),
             NativeProperties = BuildNativeProperties(element, id),
             FrameworkProperties = BuildFrameworkProperties(element),
