@@ -111,6 +111,7 @@ public class WpfVisualTreeWalker : IVisualTreeWalker
             Text = GetText(element),
             IsVisible = IsElementVisible(element),
             IsEnabled = GetIsEnabled(element),
+            IsFocused = element is UIElement { IsKeyboardFocused: true },
             Bounds = ResolveBounds(element),
             NativeProperties = BuildNativeProperties(element, id),
             FrameworkProperties = BuildFrameworkProperties(element),
