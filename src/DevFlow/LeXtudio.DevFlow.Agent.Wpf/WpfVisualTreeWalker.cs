@@ -173,7 +173,9 @@ public class WpfVisualTreeWalker : IVisualTreeWalker
     {
         return element switch
         {
-            UIElement ui => ui.Visibility == Visibility.Visible,
+            // Effectively visible: shown, and so are its ancestors - the items of a closed menu, say, are not,
+            // although their own Visibility is Visible.
+            UIElement ui => ui.IsVisible,
             FrameworkContentElement fce => (Visibility)fce.GetValue(UIElement.VisibilityProperty) == Visibility.Visible,
             _ => true
         };

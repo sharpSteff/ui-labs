@@ -521,7 +521,6 @@ public sealed class WpfAgentService : DevFlowAgentServiceBase
     protected override async Task<object?> TryBackResponseAsync()
         => await TryBackAsync().ConfigureAwait(false) ? CreateSuccessResult(SimulationModes.Semantic) : null;
 
-#if LIBREWPF
     protected override async Task<object?> TryDragResponseAsync(DragRequest request)
     {
         var resolved = await DispatchToApplicationAsync<ResolvedDrag?>(() =>
@@ -1053,7 +1052,6 @@ public sealed class WpfAgentService : DevFlowAgentServiceBase
 
         return false;
     }
-#endif
 
     private Task<T> DispatchToApplicationAsync<T>(Func<T> callback)
     {
